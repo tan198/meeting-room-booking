@@ -4,21 +4,27 @@ package com.tanle.meeting_room_booking.common.exception;
 import com.tanle.meeting_room_booking.common.logging.RequestLoggingFilter;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
+import org.hibernate.exception.ConstraintViolationException;
 import org.slf4j.MDC;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.validation.FieldError;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
-import javax.naming.AuthenticationException;
 import java.net.URI;
-import java.nio.file.AccessDeniedException;
 import java.time.OffsetDateTime;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 
 @Slf4j
@@ -29,8 +35,8 @@ public class GlobalExceptionHandler {
         ErrorCode errorCode = ex.getErrorCode();
         log.warn("[BusinessException] Code: {} | Message: {}", errorCode.name(), ex.getMessage());
 
-        ProblemDetail problem = buildProblemDetail(errorCode.getStatus(), errorCode.name(), ex.getMessage(),request);
-        if(ex.getDetails() != null && !ex.getDetails().isEmpty()) {
+        ProblemDetail problem = buildProblemDetail(errorCode.getStatus(), errorCode.name(), ex.getMessage(), request);
+        if (ex.getDetails() != null && !ex.getDetails().isEmpty()) {
             problem.setProperty("details", ex.getDetails());
         }
         return problem;
@@ -55,34 +61,35 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ProblemDetail handleDataIntegrityViolationException(DataIntegrityViolationException ex, HttpServletRequest request) {
-        String rootMgs = ex.getMostSpecificCause().getMessage();
-        log.warn("[DB Constraint Violation] Message: {}", rootMgs);
+        String constraintName = extractConstraintName(ex);
+        String rootMsg = ex.getMostSpecificCause().getMessage();
+        log.warn("[DB Constraint Violation] Constraint: {} | Message: {}", constraintName, rootMsg);
 
-        if (rootMgs != null && !rootMgs.isEmpty()) {
-            if (rootMgs.contains("excl_bookings_no_room_overlap")){
-                return buildProblemDetail(
-                        HttpStatus.CONFLICT,
-                        ErrorCode.ROOM_TIME_CONFLICT.name(),
-                        "Phòng họp vừa được người khác đặt trong khung giờ này (Bắt bởi DB Exclusion Constraint).",
-                        request
-                );
-            }
-            if(rootMgs.contains("uq_user_email")){
-                return buildProblemDetail(
-                        HttpStatus.CONFLICT,
-                        ErrorCode.DUPLICATE_RESOURCE.name(),
-                        "Email này đã tồn tại trong hệ thống.",
-                        request
-                );
-            }
-            if(rootMgs.contains("uq_room_name")){
-                return buildProblemDetail(
-                        HttpStatus.CONFLICT,
-                        ErrorCode.DUPLICATE_RESOURCE.name(),
-                        "Phong họp này đã tồn tại.",
-                        request
-                );
-            }
+        String target = constraintName != null ? constraintName : (rootMsg != null ? rootMsg : "");
+
+        if (target.contains("excl_bookings_no_room_overlap")) {
+            return buildProblemDetail(
+                    HttpStatus.CONFLICT,
+                    ErrorCode.ROOM_TIME_CONFLICT.name(),
+                    "Phòng họp vừa được người khác đặt trong khung giờ này (Bắt bởi DB Exclusion Constraint).",
+                    request
+            );
+        }
+        if (target.contains("uq_users_email")) {
+            return buildProblemDetail(
+                    HttpStatus.CONFLICT,
+                    ErrorCode.DUPLICATE_RESOURCE.name(),
+                    "Email này đã tồn tại trong hệ thống.",
+                    request
+            );
+        }
+        if (target.contains("uq_rooms_name")) {
+            return buildProblemDetail(
+                    HttpStatus.CONFLICT,
+                    ErrorCode.DUPLICATE_RESOURCE.name(),
+                    "Phòng họp này đã tồn tại.",
+                    request
+            );
         }
         return buildProblemDetail(
                 HttpStatus.CONFLICT,
@@ -90,6 +97,17 @@ public class GlobalExceptionHandler {
                 "Vi phạm ràng buộc toàn vẹn dữ liệu.",
                 request
         );
+    }
+
+    private String extractConstraintName(Throwable ex) {
+        Throwable cause = ex;
+        while (cause != null) {
+            if (cause instanceof ConstraintViolationException cve && cve.getConstraintName() != null) {
+                return cve.getConstraintName().toLowerCase(Locale.ROOT);
+            }
+            cause = cause.getCause();
+        }
+        return null;
     }
 
     @ExceptionHandler(OptimisticLockingFailureException.class)
@@ -104,7 +122,7 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(AccessDeniedException.class)
-    public  ProblemDetail handleAccessDenied(AccessDeniedException ex, HttpServletRequest request) {
+    public ProblemDetail handleAccessDenied(AccessDeniedException ex, HttpServletRequest request) {
         return buildProblemDetail(
                 HttpStatus.FORBIDDEN,
                 ErrorCode.FORBIDDEN.name(),
@@ -118,7 +136,38 @@ public class GlobalExceptionHandler {
         return buildProblemDetail(
                 HttpStatus.UNAUTHORIZED,
                 ErrorCode.UNAUTHORIZED.name(),
-               ex.getMessage(),
+                ex.getMessage(),
+                request
+        );
+    }
+
+    @ExceptionHandler({HttpMessageNotReadableException.class, MethodArgumentTypeMismatchException.class})
+    public ProblemDetail handleBadRequest(Exception ex, HttpServletRequest request) {
+        log.warn("[BadRequest] {}", ex.getMessage());
+        return buildProblemDetail(
+                HttpStatus.BAD_REQUEST,
+                ErrorCode.VALIDATION_ERROR.name(),
+                "Request không hợp lệ hoặc sai định dạng dữ liệu.",
+                request
+        );
+    }
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ProblemDetail handleNoResourceFound(NoResourceFoundException ex, HttpServletRequest request) {
+        return buildProblemDetail(
+                HttpStatus.NOT_FOUND,
+                ErrorCode.RESOURCE_NOT_FOUND.name(),
+                ErrorCode.RESOURCE_NOT_FOUND.getDefaultMessage(),
+                request
+        );
+    }
+
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ProblemDetail handleMethodNotSupported(HttpRequestMethodNotSupportedException ex, HttpServletRequest request) {
+        return buildProblemDetail(
+                HttpStatus.METHOD_NOT_ALLOWED,
+                ErrorCode.METHOD_NOT_ALLOWED.name(),
+                ErrorCode.METHOD_NOT_ALLOWED.getDefaultMessage(),
                 request
         );
     }

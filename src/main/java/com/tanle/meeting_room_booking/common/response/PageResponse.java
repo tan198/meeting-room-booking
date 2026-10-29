@@ -10,7 +10,7 @@ public record PageResponse<T>(
         int size,
         long totalElements,
         int totalPage,
-        boolean hashNext
+        boolean hasNext
 ) {
     public static <T> PageResponse<T> from(Page<T> pageData){
         return new PageResponse<>(

@@ -19,6 +19,6 @@ WORKDIR /app
 COPY --from=build /workspace/target/*.jar app.jar
 USER app
 
-EXPOSE ${APP_PORT}
+EXPOSE 8080
 ENV JAVA_OPTS="-XX:MaxRAMPercentage=75 -Duser.timezone=UTC"
 ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar /app/app.jar"]
