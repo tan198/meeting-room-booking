@@ -2,6 +2,7 @@ package com.tanle.meeting_room_booking.booking.service;
 
 import com.tanle.meeting_room_booking.booking.entity.Booking;
 import com.tanle.meeting_room_booking.booking.repository.BookingRepository;
+import com.tanle.meeting_room_booking.notification.service.NotificationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -12,12 +13,13 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 
 /**
- * Tác vụ chạy ngầm định kỳ xử lý vòng đời của Booking:
- * 1. Đánh dấu NO_SHOW cho các booking CONFIRMED quá hạn check-in (mặc định 15 phút sau start_time).
- * 2. Gửi thông báo nhắc trước khi hết giờ (pre_end_notified) cho các booking IN_PROGRESS sắp kết thúc.
- * 3. Tự động hoàn thành (COMPLETED) các booking IN_PROGRESS đã qua end_time.
+ * Tác vụ chạy ngầm định kỳ xử lý vòng đời của Booking theo Spec mục 8.5, 24.1 & 25.3:
+ * 1. Tự động chuyển PENDING -> EXPIRED nếu đã tới giờ bắt đầu (startTime <= now) mà chưa được duyệt (AC-08).
+ * 2. Tự động chuyển APPROVED/CONFIRMED + NOT_CHECKED_IN -> CANCELLED + NO_SHOW nếu quá checkInDeadline (10 phút sau startTime - AC-50).
+ * 3. Tự động đóng các phiên đang sử dụng (IN_USE) khi đã tới endTime với endSource = SYSTEM_SCHEDULED_END (AC-57).
  */
 @Slf4j
 @Component
@@ -25,8 +27,9 @@ import java.util.List;
 public class BookingScheduler {
 
     private final BookingRepository bookingRepository;
+    private final NotificationService notificationService;
 
-    @Value("${app.booking.no-show-grace-minutes:15}")
+    @Value("${app.booking.no-show-grace-minutes:10}")
     private long noShowGraceMinutes;
 
     @Value("${app.booking.pre-end-notify-minutes:10}")
@@ -37,30 +40,41 @@ public class BookingScheduler {
     public void processBookingLifecycle() {
         OffsetDateTime now = OffsetDateTime.now();
 
-        // 1. Tự động chuyển CONFIRMED -> NO_SHOW nếu quá thời gian ân hạn check-in
+        // 1. Tự động chuyển PENDING -> EXPIRED nếu đã tới startTime mà chưa duyệt (Spec 8.5 & AC-08)
+        int expiredCount = bookingRepository.expireOverduePendingBookings(now);
+        if (expiredCount > 0) {
+            log.info("[BookingScheduler] Đã đánh dấu EXPIRED cho {} yêu cầu PENDING quá giờ bắt đầu", expiredCount);
+        }
+
+        // 2. Tự động chuyển APPROVED/CONFIRMED (NOT_CHECKED_IN) -> CANCELLED + NO_SHOW nếu quá thời hạn checkInDeadline (Spec 25.3 & AC-50)
         OffsetDateTime noShowCutoff = now.minus(Duration.ofMinutes(noShowGraceMinutes));
         int noShowCount = bookingRepository.markNoShowBookings(noShowCutoff, now);
         if (noShowCount > 0) {
-            log.info("[BookingScheduler] Đã đánh dấu NO_SHOW cho {} lịch đặt phòng quá hạn check-in", noShowCount);
+            log.info("[BookingScheduler] Đã đánh dấu CANCELLED + NO_SHOW cho {} lịch đặt phòng quá hạn check-in", noShowCount);
         }
 
-        // 2. Nhắc nhở các cuộc họp IN_PROGRESS sắp hết giờ
+        // 3. Nhắc nhở các cuộc họp IN_USE sắp hết giờ
         OffsetDateTime notifyWindowEnd = now.plus(Duration.ofMinutes(preEndNotifyMinutes));
         List<Booking> endingSoon = bookingRepository.findInProgressNearEnd(now, notifyWindowEnd);
         for (Booking booking : endingSoon) {
             booking.setPreEndNotified(true);
-            log.info("[BookingScheduler] Nhắc sắp hết giờ cho booking {} (Phòng: '{}', Người đặt: '{}', Kết thúc lúc: {})",
+            String dedupeKey = "PRE_END:" + booking.getId() + ":" + booking.getEndTime().toEpochSecond();
+            notificationService.send(
+                    booking.getOrganizer().getId(),
                     booking.getId(),
-                    booking.getRoom().getName(),
-                    booking.getOrganizer().getEmail(),
-                    booking.getEndTime());
+                    "BOOKING_PRE_END",
+                    "Cuộc họp sắp hết giờ",
+                    String.format("Cuộc họp tại phòng %s sẽ kết thúc lúc %s.",
+                            booking.getRoom() != null ? booking.getRoom().getName() : "N/A", booking.getEndTime()),
+                    Map.of("endTime", booking.getEndTime().toString()),
+                    dedupeKey
+            );
         }
 
-        // 3. Tự động chuyển IN_PROGRESS -> COMPLETED khi đã hết giờ
+        // 4. Tự động đóng phiên IN_USE -> COMPLETED (SYSTEM_SCHEDULED_END) khi đã hết giờ (Spec 25.4 & AC-57)
         int completedCount = bookingRepository.completeExpiredInProgressBookings(now);
         if (completedCount > 0) {
-            log.info("[BookingScheduler] Đã tự động hoàn thành (COMPLETED) {} cuộc họp hết giờ", completedCount);
+            log.info("[BookingScheduler] Đã tự động kết thúc theo giờ (SYSTEM_SCHEDULED_END) {} cuộc họp", completedCount);
         }
     }
 }
-

@@ -56,12 +56,17 @@ public class UserController {
 
     // ----- Admin -----
 
-    @Operation(summary = "[Admin] Tạo người dùng mới", description = "Yêu cầu quyền `USER_CREATE`.")
+    @Operation(
+            summary = "[Admin] Tạo người dùng mới",
+            description = "Yêu cầu quyền `USER_CREATE`. Lưu ý: Để gán vai trò khác `USER`, người tạo cần có thêm quyền `ROLE_MANAGE` và không được cấp quyền vượt quá quyền của chính mình (chỉ `ADMIN` mới được tạo tài khoản `ADMIN`)."
+    )
     @PostMapping
     @PreAuthorize("hasAuthority('USER_CREATE')")
-    public ResponseEntity<ApiResponse<UserResponse>> create(@Valid @RequestBody CreateUser request) {
+    public ResponseEntity<ApiResponse<UserResponse>> create(
+            @Parameter(hidden = true) @AuthenticationPrincipal AuthUser principal,
+            @Valid @RequestBody CreateUser request) {
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ApiResponse.ok("Tạo người dùng thành công", userService.createUser(request)));
+                .body(ApiResponse.ok("Tạo người dùng thành công", userService.createUser(principal, request)));
     }
 
     @Operation(
@@ -88,14 +93,14 @@ public class UserController {
 
     @Operation(
             summary = "[Admin] Cập nhật thông tin người dùng",
-            description = "Yêu cầu quyền `USER_UPDATE`. Admin không thể tự khóa hoặc tự hạ quyền của chính mình."
+            description = "Yêu cầu quyền `USER_UPDATE` (và `ROLE_MANAGE` nếu thay đổi vai trò). Admin không thể tự khóa hoặc tự hạ quyền của chính mình."
     )
     @PutMapping("/{id}")
     @PreAuthorize("hasAuthority('USER_UPDATE')")
     public ApiResponse<UserResponse> update(@Parameter(hidden = true) @AuthenticationPrincipal AuthUser principal,
                                             @Parameter(description = "UUID của người dùng") @PathVariable UUID id,
                                             @Valid @RequestBody UpdateUser request) {
-        return ApiResponse.ok("Cập nhật người dùng thành công", userService.updateUser(principal.id(), id, request));
+        return ApiResponse.ok("Cập nhật người dùng thành công", userService.updateUser(principal, id, request));
     }
 
     @Operation(
@@ -106,7 +111,7 @@ public class UserController {
     @PreAuthorize("hasAuthority('USER_DELETE')")
     public ApiResponse<Void> delete(@Parameter(hidden = true) @AuthenticationPrincipal AuthUser principal,
                                     @Parameter(description = "UUID của người dùng") @PathVariable UUID id) {
-        userService.deleteUser(principal.id(), id);
+        userService.deleteUser(principal, id);
         return ApiResponse.ok("Xóa người dùng thành công");
     }
 }

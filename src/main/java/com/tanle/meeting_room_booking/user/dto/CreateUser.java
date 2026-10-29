@@ -1,9 +1,14 @@
 package com.tanle.meeting_room_booking.user.dto;
 
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
+
+import java.util.List;
+import java.util.UUID;
 
 public record CreateUser(
         @NotBlank(message = "Email không được để trống")
@@ -23,7 +28,26 @@ public record CreateUser(
         @Size(max = 100, message = "Họ tên tối đa 100 ký tự")
         String fullName,
 
-        @NotBlank(message = "Vai trò không được để trống")
-        String roleName
+        @NotBlank(message = "Vai trò hệ thống (RBAC) không được để trống")
+        String roleName,
+
+        /** Tích hợp nhanh 1 Team do Admin đã tạo khi tạo User (tùy chọn). */
+        UUID teamId,
+
+        /** Vai trò trong Team do Admin tự đặt (VD: "Dev", "PM", "BA", "Leader"...). */
+        @Size(max = 50)
+        String teamRole,
+
+        /** Hoặc truyền danh sách nhiều Team kèm vai trò (tùy chọn). */
+        @Valid
+        List<TeamAssignmentDto> teams
 ) {
+    public record TeamAssignmentDto(
+            @NotNull(message = "teamId không được để trống")
+            UUID teamId,
+
+            @Size(max = 50, message = "memberRole tối đa 50 ký tự")
+            String memberRole
+    ) {
+    }
 }

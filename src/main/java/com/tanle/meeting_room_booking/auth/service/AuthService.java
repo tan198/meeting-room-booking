@@ -4,7 +4,6 @@ import com.tanle.meeting_room_booking.auth.dto.LoginRequest;
 import com.tanle.meeting_room_booking.auth.dto.LoginResponse;
 import com.tanle.meeting_room_booking.common.exception.BusinessException;
 import com.tanle.meeting_room_booking.common.exception.ErrorCode;
-import com.tanle.meeting_room_booking.common.response.UserResponse;
 import com.tanle.meeting_room_booking.common.security.JwtTokenProvider;
 import com.tanle.meeting_room_booking.user.entity.User;
 import com.tanle.meeting_room_booking.user.repository.UserRepo;
@@ -17,8 +16,6 @@ import java.util.UUID;
 
 @Service
 public class AuthService {
-
-    private static final String TOKEN_TYPE = "Bearer";
 
     private final UserRepo userRepo;
     private final PasswordEncoder passwordEncoder;
@@ -57,11 +54,15 @@ public class AuthService {
 
     @Transactional(noRollbackFor = BusinessException.class)
     public LoginResponse refresh(String refreshToken) {
-        UUID userId = refreshTokenService.consume(refreshToken);
+        UUID ownerId = refreshTokenService.findOwnerIdOrThrow(refreshToken);
 
-        User user = userRepo.findWithRoleById(userId)
+        // Khóa bi quan (SELECT ... FOR UPDATE) trên dòng User trước khi consume & cấp token mới
+        // để tuần tự hóa hoàn toàn với logoutAll / revokeAll, ngăn token mới sống sót sau khi logoutAll.
+        User user = userRepo.findByIdForUpdate(ownerId)
                 .filter(User::isActive)
                 .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_REFRESH_TOKEN));
+
+        refreshTokenService.consume(refreshToken);
         return issueTokens(user);
     }
 
@@ -72,6 +73,7 @@ public class AuthService {
 
     @Transactional
     public void logoutAll(UUID userId) {
+        userRepo.findByIdForUpdate(userId);
         refreshTokenService.revokeAll(userId);
     }
 

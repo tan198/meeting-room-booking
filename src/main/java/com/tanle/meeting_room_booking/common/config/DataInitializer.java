@@ -45,6 +45,8 @@ public class DataInitializer implements CommandLineRunner {
         perms.put("ROOM_DELETE", "Xóa mềm phòng họp");
         perms.put("BOOKING_MANAGE", "Quản lý toàn bộ lịch đặt phòng của hệ thống");
         perms.put("ROLE_MANAGE", "Quản lý vai trò và gán quyền hạn (RBAC)");
+        perms.put("TEAM_MANAGE", "Quản lý Team chuyên môn và vị trí thành viên");
+        perms.put("GROUP_MANAGE", "Quản lý Group (Phòng ban / Dự án) và phân bổ thành viên");
         DEFAULT_PERMISSIONS = Map.copyOf(perms);
     }
 
@@ -55,6 +57,9 @@ public class DataInitializer implements CommandLineRunner {
 
     @Value("${app.admin.email:admin@meetingroom.local}")
     private String adminEmail;
+
+    @Value("${app.admin.secondary-email:admin2@meetingroom.local}")
+    private String secondaryAdminEmail;
 
     @Value("${app.admin.password:}")
     private String adminPassword;
@@ -85,22 +90,23 @@ public class DataInitializer implements CommandLineRunner {
             roleRepository.saveAndFlush(adminRole);
         }
 
-        seedAdmin(adminRole);
+        seedAdmin(adminRole, adminEmail, adminFullName);
+        // Theo Spec mục 4.2 & 18: Cần tối thiểu 2 tài khoản Admin hoạt động để Admin này có thể phê duyệt yêu cầu của Admin kia (không tự duyệt)
+        seedAdmin(adminRole, secondaryAdminEmail, adminFullName + " 2");
     }
 
-    private void seedAdmin(Role adminRole) {
-        if (adminPassword == null || adminPassword.isBlank()) {
-            log.info("ADMIN_PASSWORD chưa được cấu hình, bỏ qua việc tạo tài khoản admin mặc định");
+    private void seedAdmin(Role adminRole, String rawEmail, String fullName) {
+        if (adminPassword == null || adminPassword.isBlank() || rawEmail == null || rawEmail.isBlank()) {
             return;
         }
-        String email = adminEmail.trim().toLowerCase(Locale.ROOT);
+        String email = rawEmail.trim().toLowerCase(Locale.ROOT);
         if (userRepo.existsByEmail(email)) {
             return;
         }
         userRepo.save(User.builder()
                 .email(email)
                 .password(passwordEncoder.encode(adminPassword))
-                .fullName(adminFullName)
+                .fullName(fullName)
                 .role(adminRole)
                 .build());
         log.info("Đã tạo tài khoản admin mặc định: {}", email);

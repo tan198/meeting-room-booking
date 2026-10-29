@@ -1,5 +1,6 @@
 package com.tanle.meeting_room_booking.room.service;
 
+import com.tanle.meeting_room_booking.booking.repository.BookingRepository;
 import com.tanle.meeting_room_booking.common.exception.BusinessException;
 import com.tanle.meeting_room_booking.common.exception.ErrorCode;
 import com.tanle.meeting_room_booking.common.response.PageResponse;
@@ -29,6 +30,7 @@ public class RoomService {
     private static final int MAX_PAGE_SIZE = 50;
 
     private final RoomRepository roomRepository;
+    private final BookingRepository bookingRepository;
 
     @Transactional
     public RoomResponse createRoom(CreateRoomRequest rq) {
@@ -94,13 +96,24 @@ public class RoomService {
 
     @Transactional
     public void deleteRoom(UUID id) {
-        Room room = findOrThrow(id);
+        Room room = findForUpdateOrThrow(id);
+        if (bookingRepository.existsActiveBookingsForRoom(id, OffsetDateTime.now())) {
+            throw new BusinessException(
+                    ErrorCode.INVALID_BOOKING_STATE,
+                    "Không thể xóa phòng họp đang có lịch đặt hoạt động (CONFIRMED / IN_PROGRESS). Vui lòng hủy hoặc chuyển phòng cho các lịch họp trước."
+            );
+        }
         room.setDeletedAt(OffsetDateTime.now());
         room.setStatus(RoomStatus.INACTIVE);
     }
 
     public Room findOrThrow(UUID id) {
         return roomRepository.findById(id)
+                .orElseThrow(() -> new BusinessException(ErrorCode.ROOM_NOT_FOUND));
+    }
+
+    public Room findForUpdateOrThrow(UUID id) {
+        return roomRepository.findByIdForUpdate(id)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ROOM_NOT_FOUND));
     }
 
@@ -123,4 +136,3 @@ public class RoomService {
                 .replace("_", "\\_");
     }
 }
-
