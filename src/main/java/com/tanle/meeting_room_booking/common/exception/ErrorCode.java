@@ -15,6 +15,8 @@ public enum ErrorCode {
     ROOM_NOT_AVAILABLE_STATUS(HttpStatus.BAD_REQUEST, "Phòng họp hiện đang bảo trì hoặc ngưng hoạt động"),
     INVALID_BOOKING_STATE(HttpStatus.BAD_REQUEST, "Trạng thái lịch đặt phòng không hợp lệ cho thao tác này"),
     INVALID_CURRENT_PASSWORD(HttpStatus.BAD_REQUEST, "Mật khẩu không khớp"),
+    SYSTEM_ROLE_PROTECTED(HttpStatus.BAD_REQUEST, "Không thể xóa hoặc sửa vai trò mặc định của hệ thống"),
+    ROLE_IN_USE(HttpStatus.CONFLICT, "Không thể xóa vai trò đang được gán cho người dùng"),
 
     // 401 & 403 Auth
     UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "Chưa xác thực hoặc phiên đăng nhập đã hết hạn"),
@@ -30,7 +32,8 @@ public enum ErrorCode {
     ROOM_NOT_FOUND(HttpStatus.NOT_FOUND, "Không tìm thấy phòng họp"),
     BOOKING_NOT_FOUND(HttpStatus.NOT_FOUND, "Không tìm thấy lịch đặt phòng"),
     ROLE_NOT_FOUND(HttpStatus.NOT_FOUND, "Không tìm thấy vai trò"),
-    CANNOT_MODIFY_SELF(HttpStatus.FORBIDDEN,"Không thể thực hiện thao tác này"),
+    PERMISSION_NOT_FOUND(HttpStatus.NOT_FOUND, "Không tìm thấy quyền hạn"),
+    CANNOT_MODIFY_SELF(HttpStatus.FORBIDDEN, "Không thể thực hiện thao tác này"),
 
     // 409 Conflict (Cực kỳ quan trọng cho bài toán Đặt phòng)
     ROOM_TIME_CONFLICT(HttpStatus.CONFLICT, "Phòng họp đã có người đặt trong khung giờ này"),

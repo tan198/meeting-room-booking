@@ -16,6 +16,8 @@ public interface UserRepo extends JpaRepository<User, UUID> {
 
     boolean existsByEmail(String email);
 
+    boolean existsByRole_Id(UUID roleId);
+
     /** Loads role + permissions in one query (used by login and per-request authentication). */
     @EntityGraph(attributePaths = {"role", "role.permissions"})
     Optional<User> findWithRoleByEmail(String email);
@@ -29,7 +31,7 @@ public interface UserRepo extends JpaRepository<User, UUID> {
      * (a null String parameter inside LOWER/CONCAT is typed as bytea by PostgreSQL and fails).
      */
     @Query(value = """
-          SELECT u FROM User u LEFT JOIN FETCH u.role r
+          SELECT u FROM User u LEFT JOIN FETCH u.role r LEFT JOIN FETCH r.permissions
           WHERE (:keyword = '' OR LOWER(u.fullName) LIKE CONCAT('%', :keyword, '%') ESCAPE '\\'
                  OR LOWER(u.email) LIKE CONCAT('%', :keyword, '%') ESCAPE '\\')
             AND (:roleName IS NULL OR r.name = :roleName)
