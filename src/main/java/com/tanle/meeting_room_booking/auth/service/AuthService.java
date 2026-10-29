@@ -25,7 +25,6 @@ public class AuthService {
     private final JwtTokenProvider jwtTokenProvider;
     private final RefreshTokenService refreshTokenService;
 
-    /** Used to burn the same CPU time when the email is unknown (prevents user enumeration by timing). */
     private final String dummyHash;
 
     public AuthService(UserRepo userRepo,
@@ -56,10 +55,6 @@ public class AuthService {
         return issueTokens(user);
     }
 
-    /**
-     * Rotates the refresh token: the presented one is revoked and a new pair is issued.
-     * noRollbackFor keeps the "reuse detected -> revoke all" write that happens before the exception.
-     */
     @Transactional(noRollbackFor = BusinessException.class)
     public LoginResponse refresh(String refreshToken) {
         UUID userId = refreshTokenService.consume(refreshToken);
@@ -85,11 +80,7 @@ public class AuthService {
         var refresh = refreshTokenService.issue(user.getId());
         return new LoginResponse(
                 access.token(),
-                refresh.token(),
-                TOKEN_TYPE,
-                jwtTokenProvider.getExpiresInSeconds(),
-                refresh.expiresInSeconds(),
-                UserResponse.from(user)
+                refresh.token()
         );
     }
 }

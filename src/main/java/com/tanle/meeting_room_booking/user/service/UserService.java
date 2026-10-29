@@ -51,7 +51,7 @@ public class UserService {
         user.setRole(findRoleOrThrow(rq.roleName()));
         user.setActive(true);
 
-        return UserResponse.from(userRepo.save(user));
+        return UserResponse.from(userRepo.saveAndFlush(user));
     }
 
     public UserResponse getById(UUID id) {

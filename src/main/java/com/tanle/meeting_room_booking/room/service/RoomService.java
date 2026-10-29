@@ -1,0 +1,126 @@
+package com.tanle.meeting_room_booking.room.service;
+
+import com.tanle.meeting_room_booking.common.exception.BusinessException;
+import com.tanle.meeting_room_booking.common.exception.ErrorCode;
+import com.tanle.meeting_room_booking.common.response.PageResponse;
+import com.tanle.meeting_room_booking.room.dto.CreateRoomRequest;
+import com.tanle.meeting_room_booking.room.dto.RoomResponse;
+import com.tanle.meeting_room_booking.room.dto.UpdateRoomRequest;
+import com.tanle.meeting_room_booking.room.entity.Room;
+import com.tanle.meeting_room_booking.room.entity.RoomStatus;
+import com.tanle.meeting_room_booking.room.repository.RoomRepository;
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.OffsetDateTime;
+import java.util.List;
+import java.util.Locale;
+import java.util.Objects;
+import java.util.UUID;
+
+@Service
+@RequiredArgsConstructor
+@Transactional(readOnly = true)
+public class RoomService {
+
+    private static final int MAX_PAGE_SIZE = 50;
+
+    private final RoomRepository roomRepository;
+
+    @Transactional
+    public RoomResponse createRoom(CreateRoomRequest rq) {
+        String name = rq.name().trim();
+        if (roomRepository.existsByNameIgnoreCase(name)) {
+            throw new BusinessException(ErrorCode.DUPLICATE_RESOURCE, "Phòng họp '" + name + "' đã tồn tại");
+        }
+
+        Room room = Room.builder()
+                .name(name)
+                .floor(rq.floor())
+                .capacity(rq.capacity())
+                .facilities(normalizeFacilities(rq.facilities()))
+                .status(RoomStatus.ACTIVE)
+                .build();
+
+        return RoomResponse.from(roomRepository.saveAndFlush(room));
+    }
+
+    public RoomResponse getById(UUID id) {
+        return RoomResponse.from(findOrThrow(id));
+    }
+
+    public PageResponse<RoomResponse> search(String keyword, Integer floor, Integer minCapacity, RoomStatus status, int page, int size) {
+        String kw = (keyword == null || keyword.isBlank())
+                ? ""
+                : escapeLike(keyword.trim().toLowerCase(Locale.ROOT));
+        var pageable = PageRequest.of(
+                Math.max(page, 0),
+                Math.clamp(size, 1, MAX_PAGE_SIZE),
+                Sort.by(Sort.Order.asc("floor"), Sort.Order.asc("name"))
+        );
+        return PageResponse.from(roomRepository.searchRooms(kw, floor, minCapacity, status, pageable).map(RoomResponse::from));
+    }
+
+    public List<RoomResponse> findAvailableRooms(OffsetDateTime startTime, OffsetDateTime endTime, Integer minCapacity, Integer floor) {
+        if (startTime == null || endTime == null || !startTime.isBefore(endTime)) {
+            throw new BusinessException(ErrorCode.INVALID_TIME_RANGE, "Thời gian bắt đầu phải nhỏ hơn thời gian kết thúc");
+        }
+        return roomRepository.findAvailableRooms(startTime, endTime, minCapacity, floor)
+                .stream()
+                .map(RoomResponse::from)
+                .toList();
+    }
+
+    @Transactional
+    public RoomResponse updateRoom(UUID id, UpdateRoomRequest rq) {
+        Room room = findOrThrow(id);
+        String name = rq.name().trim();
+
+        if (roomRepository.existsByNameIgnoreCaseAndIdNot(name, id)) {
+            throw new BusinessException(ErrorCode.DUPLICATE_RESOURCE, "Phòng họp '" + name + "' đã tồn tại");
+        }
+
+        room.setName(name);
+        room.setFloor(rq.floor());
+        room.setCapacity(rq.capacity());
+        room.setFacilities(normalizeFacilities(rq.facilities()));
+        room.setStatus(rq.status());
+
+        return RoomResponse.from(roomRepository.saveAndFlush(room));
+    }
+
+    @Transactional
+    public void deleteRoom(UUID id) {
+        Room room = findOrThrow(id);
+        room.setDeletedAt(OffsetDateTime.now());
+        room.setStatus(RoomStatus.INACTIVE);
+    }
+
+    public Room findOrThrow(UUID id) {
+        return roomRepository.findById(id)
+                .orElseThrow(() -> new BusinessException(ErrorCode.ROOM_NOT_FOUND));
+    }
+
+    private static List<String> normalizeFacilities(List<String> facilities) {
+        if (facilities == null || facilities.isEmpty()) {
+            return List.of();
+        }
+        return facilities.stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .distinct()
+                .toList();
+    }
+
+    private static String escapeLike(String input) {
+        return input
+                .replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_");
+    }
+}
+

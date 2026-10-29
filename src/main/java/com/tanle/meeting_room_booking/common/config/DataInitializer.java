@@ -1,5 +1,7 @@
 package com.tanle.meeting_room_booking.common.config;
 
+import com.tanle.meeting_room_booking.permission.entity.Permission;
+import com.tanle.meeting_room_booking.permission.repository.PermissionRepository;
 import com.tanle.meeting_room_booking.role.entity.Role;
 import com.tanle.meeting_room_booking.role.repository.RoleRepository;
 import com.tanle.meeting_room_booking.user.entity.User;
@@ -12,13 +14,13 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
- * Seeds the base roles and (optionally) the first admin account. Idempotent.
- * Without roles no user can be created, because users.role_id is NOT NULL.
- * The admin is created only when app.admin.password (env ADMIN_PASSWORD) is set.
+ * Seeds the base roles, permissions, and (optionally) the first admin account. Idempotent.
  */
 @Slf4j
 @Component
@@ -30,7 +32,24 @@ public class DataInitializer implements CommandLineRunner {
             "USER", "Người dùng thông thường"
     );
 
+    private static final Map<String, String> DEFAULT_PERMISSIONS;
+
+    static {
+        Map<String, String> perms = new LinkedHashMap<>();
+        perms.put("USER_READ", "Xem danh sách và chi tiết người dùng");
+        perms.put("USER_CREATE", "Tạo người dùng");
+        perms.put("USER_UPDATE", "Cập nhật người dùng");
+        perms.put("USER_DELETE", "Xóa người dùng");
+        perms.put("ROOM_CREATE", "Tạo phòng họp mới");
+        perms.put("ROOM_UPDATE", "Cập nhật thông tin và trạng thái phòng họp");
+        perms.put("ROOM_DELETE", "Xóa mềm phòng họp");
+        perms.put("BOOKING_MANAGE", "Quản lý toàn bộ lịch đặt phòng của hệ thống");
+        perms.put("ROLE_MANAGE", "Quản lý vai trò và gán quyền hạn (RBAC)");
+        DEFAULT_PERMISSIONS = Map.copyOf(perms);
+    }
+
     private final RoleRepository roleRepository;
+    private final PermissionRepository permissionRepository;
     private final UserRepo userRepo;
     private final PasswordEncoder passwordEncoder;
 
@@ -46,15 +65,30 @@ public class DataInitializer implements CommandLineRunner {
     @Override
     @Transactional
     public void run(String... args) {
+        DEFAULT_PERMISSIONS.forEach((code, description) -> {
+            if (!permissionRepository.existsByCode(code)) {
+                permissionRepository.save(Permission.builder().code(code).description(description).build());
+            }
+        });
+
         DEFAULT_ROLES.forEach((name, description) -> {
             if (!roleRepository.existsByName(name)) {
                 roleRepository.save(Role.builder().name(name).description(description).build());
             }
         });
-        seedAdmin();
+
+        // Đảm bảo vai trò ADMIN luôn có đầy đủ tất cả quyền hệ thống
+        Role adminRole = roleRepository.findWithPermissionsByName("ADMIN").orElseThrow();
+        Set<Permission> allPerms = Set.copyOf(permissionRepository.findAll());
+        if (!adminRole.getPermissions().containsAll(allPerms)) {
+            adminRole.getPermissions().addAll(allPerms);
+            roleRepository.saveAndFlush(adminRole);
+        }
+
+        seedAdmin(adminRole);
     }
 
-    private void seedAdmin() {
+    private void seedAdmin(Role adminRole) {
         if (adminPassword == null || adminPassword.isBlank()) {
             log.info("ADMIN_PASSWORD chưa được cấu hình, bỏ qua việc tạo tài khoản admin mặc định");
             return;
@@ -63,7 +97,6 @@ public class DataInitializer implements CommandLineRunner {
         if (userRepo.existsByEmail(email)) {
             return;
         }
-        Role adminRole = roleRepository.findByName("ADMIN").orElseThrow();
         userRepo.save(User.builder()
                 .email(email)
                 .password(passwordEncoder.encode(adminPassword))

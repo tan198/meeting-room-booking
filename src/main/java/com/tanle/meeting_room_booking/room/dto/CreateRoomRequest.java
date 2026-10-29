@@ -1,0 +1,25 @@
+package com.tanle.meeting_room_booking.room.dto;
+
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
+
+import java.util.List;
+
+public record CreateRoomRequest(
+        @NotBlank(message = "Tên phòng không được để trống")
+        @Size(max = 100, message = "Tên phòng tối đa 100 ký tự")
+        String name,
+
+        @NotNull(message = "Tầng không được để trống")
+        Integer floor,
+
+        @NotNull(message = "Sức chứa không được để trống")
+        @Min(value = 1, message = "Sức chứa phải lớn hơn 0")
+        Integer capacity,
+
+        List<@NotBlank(message = "Tên tiện ích không được để trống") @Size(max = 50) String> facilities
+) {
+}
+
