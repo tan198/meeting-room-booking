@@ -14,16 +14,23 @@ public enum ErrorCode {
     ROOM_CAPACITY_EXCEEDED(HttpStatus.BAD_REQUEST, "Số lượng người tham gia vượt quá sức chứa của phòng"),
     ROOM_NOT_AVAILABLE_STATUS(HttpStatus.BAD_REQUEST, "Phòng họp hiện đang bảo trì hoặc ngưng hoạt động"),
     INVALID_BOOKING_STATE(HttpStatus.BAD_REQUEST, "Trạng thái lịch đặt phòng không hợp lệ cho thao tác này"),
+    INVALID_CURRENT_PASSWORD(HttpStatus.BAD_REQUEST, "Mật khẩu không khớp"),
 
     // 401 & 403 Auth
     UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "Chưa xác thực hoặc phiên đăng nhập đã hết hạn"),
     INVALID_CREDENTIALS(HttpStatus.UNAUTHORIZED, "Email hoặc mật khẩu không chính xác"),
+    INVALID_REFRESH_TOKEN(HttpStatus.UNAUTHORIZED, "Refresh token không hợp lệ hoặc đã hết hạn"),
     FORBIDDEN(HttpStatus.FORBIDDEN, "Bạn không có quyền thực hiện thao tác này"),
+    ACCOUNT_DISABLED(HttpStatus.FORBIDDEN, "Tài khoản đã bị vô hiệu hóa"),
 
     // 404 Not Found
+    RESOURCE_NOT_FOUND(HttpStatus.NOT_FOUND, "Không tìm thấy tài nguyên yêu cầu"),
+    METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED, "Phương thức HTTP không được hỗ trợ"),
     USER_NOT_FOUND(HttpStatus.NOT_FOUND, "Không tìm thấy người dùng"),
     ROOM_NOT_FOUND(HttpStatus.NOT_FOUND, "Không tìm thấy phòng họp"),
     BOOKING_NOT_FOUND(HttpStatus.NOT_FOUND, "Không tìm thấy lịch đặt phòng"),
+    ROLE_NOT_FOUND(HttpStatus.NOT_FOUND, "Không tìm thấy vai trò"),
+    CANNOT_MODIFY_SELF(HttpStatus.FORBIDDEN,"Không thể thực hiện thao tác này"),
 
     // 409 Conflict (Cực kỳ quan trọng cho bài toán Đặt phòng)
     ROOM_TIME_CONFLICT(HttpStatus.CONFLICT, "Phòng họp đã có người đặt trong khung giờ này"),

@@ -10,7 +10,7 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       TZ: UTC
     ports:
-      - "${POSTGRES_HOST_POST:-5433}:5432"
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -28,12 +28,16 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DB_URL: jdbc:postgresql://localhost:${POSTGRES_HOST_PORT}/${POSTGRES_DB}
-      DB_USER: ${DB_USERNAME}
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      DB_USERNAME: ${DB_USERNAME}
       DB_PASSWORD: ${DB_PASSWORD}
 
-      JWT_SECRET: ${JWT_SECRET:-screte-test}
-      SPRING_FLYWAY_LOCATIONS: classpath:db/migrate,classpath:db/seed
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set (>= 32 bytes)}
+      JWT_EXPIRATION: ${JWT_EXPIRATION:-3600000}
+      JWT_REFRESH_EXPIRATION: ${JWT_REFRESH_EXPIRATION:-604800000}
+
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@meetingroom.local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
     ports:
       - "${APP_PORT:-8000}:8080"
     restart: unless-stopped

@@ -5,10 +5,10 @@ import lombok.Getter;
 import java.util.Map;
 
 @Getter
-public class BusinessException extends RuntimeException{
+public class BusinessException extends RuntimeException {
 
     private final ErrorCode errorCode;
-    private final Map<String,Object> details;
+    private final Map<String, Object> details;
 
     public BusinessException(ErrorCode errorCode) {
         super(errorCode.getDefaultMessage());
@@ -22,14 +22,14 @@ public class BusinessException extends RuntimeException{
         this.details = details;
     }
 
-    public BusinessException(ErrorCode errorCode, String CustomMessage) {
-        super(CustomMessage);
+    public BusinessException(ErrorCode errorCode, String customMessage) {
+        super(customMessage);
         this.errorCode = errorCode;
         this.details = null;
     }
 
-    public BusinessException(ErrorCode errorCode, String CustomMessage, Map<String,Object> details) {
-        super(CustomMessage);
+    public BusinessException(ErrorCode errorCode, String customMessage, Map<String, Object> details) {
+        super(customMessage);
         this.errorCode = errorCode;
         this.details = details;
     }
