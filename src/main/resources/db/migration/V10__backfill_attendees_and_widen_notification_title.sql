@@ -8,8 +8,8 @@
 -- =====================================================================
 
 -- 1. Backfill organizer vào booking_attendees cho các booking cũ
-INSERT INTO booking_attendees (booking_id, user_id, attendee_role, rsvp_status, responded_at, created_at)
-SELECT b.id, b.organizer_id, 'ORGANIZER', 'ACCEPTED', b.created_at, b.created_at
+INSERT INTO booking_attendees (booking_id, user_id, attendee_role, rsvp_status, responded_at)
+SELECT b.id, b.organizer_id, 'ORGANIZER', 'ACCEPTED', b.created_at
 FROM bookings b
 WHERE NOT EXISTS (
     SELECT 1
