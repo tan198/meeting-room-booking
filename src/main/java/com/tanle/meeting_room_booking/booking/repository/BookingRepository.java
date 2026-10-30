@@ -328,4 +328,27 @@ public interface BookingRepository extends JpaRepository<Booking, UUID> {
               AND b.endTime <= :now
             """)
     int completeExpiredInProgressBookings(@Param("now") OffsetDateTime now);
+
+    /**
+     * Truy vấn toàn bộ các booking giao với khoảng báo cáo [fromTime, toTime) phục vụ thống kê (Spec mục 13 & 26).
+     */
+    @EntityGraph(attributePaths = {"room", "organizer", "team", "group"})
+    @Query("""
+            SELECT b FROM Booking b
+            WHERE b.startTime < :toTime
+              AND b.endTime > :fromTime
+              AND (:roomId IS NULL OR b.room.id = :roomId)
+              AND (:departmentId IS NULL OR b.organizerDepartmentId = :departmentId)
+              AND (:teamId IS NULL OR b.team.id = :teamId)
+              AND (:projectId IS NULL OR b.group.id = :projectId)
+            ORDER BY b.startTime ASC
+            """)
+    List<Booking> findForReportInRange(
+            @Param("fromTime") OffsetDateTime fromTime,
+            @Param("toTime") OffsetDateTime toTime,
+            @Param("roomId") UUID roomId,
+            @Param("departmentId") UUID departmentId,
+            @Param("teamId") UUID teamId,
+            @Param("projectId") UUID projectId
+    );
 }

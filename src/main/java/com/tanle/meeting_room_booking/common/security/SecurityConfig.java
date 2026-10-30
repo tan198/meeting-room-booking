@@ -1,5 +1,6 @@
 package com.tanle.meeting_room_booking.common.security;
 
+import com.tanle.meeting_room_booking.common.idempotency.IdempotencyFilter;
 import com.tanle.meeting_room_booking.user.repository.UserRepo;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
@@ -20,6 +21,7 @@ public class SecurityConfig {
     private final JwtTokenProvider jwtTokenProvider;
     private final UserRepo userRepo;
     private final RestSecurityErrorHandler errorHandler;
+    private final IdempotencyFilter idempotencyFilter;
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
@@ -38,7 +40,8 @@ public class SecurityConfig {
                         .anyRequest().authenticated()
                 )
                 .addFilterBefore(new JwtAuthenticationFilter(jwtTokenProvider, userRepo),
-                        UsernamePasswordAuthenticationFilter.class);
+                        UsernamePasswordAuthenticationFilter.class)
+                .addFilterAfter(idempotencyFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }
 }

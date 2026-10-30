@@ -43,6 +43,23 @@ public class TeamService {
                 .toList();
     }
 
+    public List<TeamResponse> findMyTeams(UUID userId) {
+        List<UserTeam> memberships = userTeamRepository.findById_UserId(userId);
+        if (memberships.isEmpty()) {
+            return List.of();
+        }
+        List<Team> teams = memberships.stream()
+                .map(UserTeam::getTeam)
+                .distinct()
+                .toList();
+        List<UUID> teamIds = teams.stream().map(Team::getId).toList();
+        var membersByTeam = userTeamRepository.findById_TeamIdIn(teamIds).stream()
+                .collect(java.util.stream.Collectors.groupingBy(ut -> ut.getTeam().getId()));
+        return teams.stream()
+                .map(t -> TeamResponse.from(t, membersByTeam.getOrDefault(t.getId(), List.of())))
+                .toList();
+    }
+
     public TeamResponse getById(UUID id) {
         Team team = findOrThrow(id);
         return TeamResponse.from(team, userTeamRepository.findById_TeamId(id));

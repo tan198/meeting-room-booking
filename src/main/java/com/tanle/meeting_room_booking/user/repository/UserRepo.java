@@ -30,6 +30,12 @@ public interface UserRepo extends JpaRepository<User, UUID> {
             """)
     List<UUID> findActiveAdminIds();
 
+    @Query("""
+            SELECT u.id FROM User u
+            WHERE u.isActive = true
+            """)
+    List<UUID> findAllActiveUserIds();
+
     /** Loads role + permissions in one query (used by login and per-request authentication). */
     @EntityGraph(attributePaths = {"role", "role.permissions"})
     Optional<User> findWithRoleByEmail(String email);
