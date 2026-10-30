@@ -64,6 +64,13 @@ public interface RoomRepository extends JpaRepository<Room, UUID> {
                     AND b.startTime < :endTime
                     AND COALESCE(b.releasedAt, b.endTime) > :startTime
               )
+              AND NOT EXISTS (
+                  SELECT 1 FROM RoomBlock rb
+                  WHERE rb.room.id = r.id
+                    AND rb.status = com.tanle.meeting_room_booking.issue.entity.RoomBlockStatus.ACTIVE
+                    AND rb.startTime < :endTime
+                    AND rb.endTime > :startTime
+              )
             ORDER BY r.capacity ASC, r.floor ASC, r.name ASC
             """)
     List<Room> findAvailableRooms(

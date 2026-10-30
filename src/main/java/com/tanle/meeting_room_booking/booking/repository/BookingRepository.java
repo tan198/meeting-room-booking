@@ -200,6 +200,63 @@ public interface BookingRepository extends JpaRepository<Booking, UUID> {
             @Param("toTime") OffsetDateTime toTime
     );
 
+    /**
+     * Tìm các booking đã được duyệt (APPROVED / CONFIRMED / IN_PROGRESS) còn giữ phòng hiệu lực từ hiện tại trở đi
+     * và giao với khoảng chặn [blockStart, blockEnd) của phòng roomId (Spec 11.2 & AC-21, AC-22).
+     */
+    @EntityGraph(attributePaths = {"room", "organizer", "team", "group"})
+    @Query("""
+            SELECT b FROM Booking b
+            WHERE b.room.id = :roomId
+              AND b.status IN (
+                  com.tanle.meeting_room_booking.booking.entity.BookingStatus.APPROVED,
+                  com.tanle.meeting_room_booking.booking.entity.BookingStatus.CONFIRMED,
+                  com.tanle.meeting_room_booking.booking.entity.BookingStatus.IN_PROGRESS
+              )
+              AND b.usageStatus NOT IN (
+                  com.tanle.meeting_room_booking.booking.entity.UsageStatus.COMPLETED,
+                  com.tanle.meeting_room_booking.booking.entity.UsageStatus.NO_SHOW,
+                  com.tanle.meeting_room_booking.booking.entity.UsageStatus.INTERRUPTED
+              )
+              AND COALESCE(b.releasedAt, b.endTime) > :now
+              AND b.startTime < :blockEnd
+              AND COALESCE(b.releasedAt, b.endTime) > :blockStart
+            ORDER BY b.startTime ASC
+            """)
+    List<Booking> findAffectedActiveBookingsForRoom(
+            @Param("roomId") UUID roomId,
+            @Param("blockStart") OffsetDateTime blockStart,
+            @Param("blockEnd") OffsetDateTime blockEnd,
+            @Param("now") OffsetDateTime now
+    );
+
+    /**
+     * Tìm các lịch đặt đang giữ hiệu lực từ hiện tại trở đi mà phòng sẽ không còn đáp ứng nếu ngừng phòng hoặc giảm sức chứa (Spec 6.1 & AC-26).
+     */
+    @EntityGraph(attributePaths = {"room", "organizer"})
+    @Query("""
+            SELECT b FROM Booking b
+            WHERE b.room.id = :roomId
+              AND b.status IN (
+                  com.tanle.meeting_room_booking.booking.entity.BookingStatus.APPROVED,
+                  com.tanle.meeting_room_booking.booking.entity.BookingStatus.CONFIRMED,
+                  com.tanle.meeting_room_booking.booking.entity.BookingStatus.IN_PROGRESS
+              )
+              AND b.usageStatus NOT IN (
+                  com.tanle.meeting_room_booking.booking.entity.UsageStatus.COMPLETED,
+                  com.tanle.meeting_room_booking.booking.entity.UsageStatus.NO_SHOW,
+                  com.tanle.meeting_room_booking.booking.entity.UsageStatus.INTERRUPTED
+              )
+              AND COALESCE(b.releasedAt, b.endTime) > :now
+              AND (:newCapacity IS NULL OR b.attendeeCount > :newCapacity)
+            ORDER BY b.startTime ASC
+            """)
+    List<Booking> findFutureBookingsViolatingRoomChange(
+            @Param("roomId") UUID roomId,
+            @Param("now") OffsetDateTime now,
+            @Param("newCapacity") Integer newCapacity
+    );
+
     // ----- Scheduler queries (Spec 8.5, 24.1 & 25.3) -----
 
     /**

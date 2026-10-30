@@ -4,6 +4,7 @@ import com.tanle.meeting_room_booking.booking.dto.*;
 import com.tanle.meeting_room_booking.booking.entity.*;
 import com.tanle.meeting_room_booking.booking.repository.BookingAttendeeRepository;
 import com.tanle.meeting_room_booking.booking.repository.BookingAuditLogRepository;
+import com.tanle.meeting_room_booking.booking.repository.BookingChangeRepository;
 import com.tanle.meeting_room_booking.booking.repository.BookingRepository;
 import com.tanle.meeting_room_booking.common.exception.BusinessException;
 import com.tanle.meeting_room_booking.common.exception.ErrorCode;
@@ -13,6 +14,7 @@ import com.tanle.meeting_room_booking.group.entity.UserGroupId;
 import com.tanle.meeting_room_booking.group.entity.WorkGroup;
 import com.tanle.meeting_room_booking.group.repository.UserGroupRepository;
 import com.tanle.meeting_room_booking.group.service.GroupService;
+import com.tanle.meeting_room_booking.issue.repository.RoomBlockRepository;
 import com.tanle.meeting_room_booking.notification.service.NotificationService;
 import com.tanle.meeting_room_booking.room.entity.Room;
 import com.tanle.meeting_room_booking.room.entity.RoomStatus;
@@ -47,8 +49,10 @@ public class BookingService {
     private static final OffsetDateTime MAX_BOUND = OffsetDateTime.of(9999, 12, 31, 23, 59, 59, 0, ZoneOffset.UTC);
 
     private final BookingRepository bookingRepository;
+    private final BookingChangeRepository bookingChangeRepository;
     private final BookingAttendeeRepository attendeeRepository;
     private final BookingAuditLogRepository auditLogRepository;
+    private final RoomBlockRepository roomBlockRepository;
     private final UserTeamRepository userTeamRepository;
     private final UserGroupRepository userGroupRepository;
     private final TeamService teamService;
@@ -104,8 +108,9 @@ public class BookingService {
         if (preferredRoomId != null) {
             preferredRoom = roomService.findOrThrow(preferredRoomId);
             validateRoomForBooking(preferredRoom, totalParticipants);
-            if (bookingRepository.existsOverlappingBooking(preferredRoom.getId(), start, end, null)) {
-                warnings.add("PREFERRED_ROOM_BUSY: Phòng mong muốn hiện đang có lịch đặt trong khung giờ này. Yêu cầu vẫn được ghi nhận ở trạng thái PENDING để Admin bố trí phòng phù hợp.");
+            if (bookingRepository.existsOverlappingBooking(preferredRoom.getId(), start, end, null)
+                    || roomBlockRepository.existsOverlappingActiveBlock(preferredRoom.getId(), start, end, null)) {
+                warnings.add("PREFERRED_ROOM_BUSY: Phòng mong muốn hiện đang có lịch đặt hoặc đang trong khoảng chặn bảo trì. Yêu cầu vẫn được ghi nhận ở trạng thái PENDING để Admin bố trí phòng phù hợp.");
             }
         } else if (roomService.findAvailableRooms(start, end, totalParticipants, null).isEmpty()) {
             warnings.add("NO_MATCHING_ROOM: Hiện chưa có phòng trống đáp ứng sức chứa trong khung giờ này. Yêu cầu vẫn được ghi nhận ở trạng thái PENDING để Admin xem xét.");
@@ -229,7 +234,8 @@ public class BookingService {
         if (booking.getAttendeeCount() > assignedRoom.getCapacity()) {
             throw new BusinessException(ErrorCode.ROOM_REQUIREMENTS_NOT_MET, "Phòng được chọn không đủ sức chứa cho " + booking.getAttendeeCount() + " người");
         }
-        if (bookingRepository.existsOverlappingBooking(assignedRoom.getId(), booking.getStartTime(), booking.getEndTime(), booking.getId())) {
+        if (bookingRepository.existsOverlappingBooking(assignedRoom.getId(), booking.getStartTime(), booking.getEndTime(), booking.getId())
+                || roomBlockRepository.existsOverlappingActiveBlock(assignedRoom.getId(), booking.getStartTime(), booking.getEndTime(), null)) {
             throw new BusinessException(ErrorCode.ROOM_UNAVAILABLE);
         }
 
@@ -307,6 +313,8 @@ public class BookingService {
         booking.setRejectReason(reason);
 
         Booking saved = bookingRepository.saveAndFlush(booking);
+        // Hủy mọi đề nghị thay đổi đang PENDING của booking này (Spec 8.5, 9 & AC-17)
+        bookingChangeRepository.cancelPendingChangesForBooking(bookingId, "Lịch đặt phòng gốc đã bị hủy", now);
         List<BookingAttendee> attendees = attendeeRepository.findById_BookingId(bookingId);
 
         auditLogRepository.save(BookingAuditLog.builder()
@@ -365,12 +373,15 @@ public class BookingService {
         }
 
         OffsetDateTime checkFrom = now.isAfter(booking.getStartTime()) ? now : booking.getStartTime();
-        if (bookingRepository.existsOverlappingBooking(newRoom.getId(), checkFrom, booking.getEndTime(), booking.getId())) {
-            throw new BusinessException(ErrorCode.ROOM_UNAVAILABLE, "Phòng thay thế đang bận trong khoảng thời gian còn lại");
+        if (bookingRepository.existsOverlappingBooking(newRoom.getId(), checkFrom, booking.getEndTime(), booking.getId())
+                || roomBlockRepository.existsOverlappingActiveBlock(newRoom.getId(), checkFrom, booking.getEndTime(), null)) {
+            throw new BusinessException(ErrorCode.ROOM_UNAVAILABLE, "Phòng thay thế đang bận hoặc bị chặn trong khoảng thời gian còn lại");
         }
 
         booking.setRoom(newRoom);
         Booking saved = bookingRepository.saveAndFlush(booking);
+        // Nếu có đề nghị thay đổi đang chờ (PENDING), tự động đóng với lý do lịch gốc đã được chuyển phòng vận hành (Spec 9 & AC-17)
+        bookingChangeRepository.cancelPendingChangesForBooking(bookingId, "Lịch gốc đã được Admin chuyển phòng vận hành", now);
         List<BookingAttendee> attendees = attendeeRepository.findById_BookingId(bookingId);
 
         String reason = rq.reason().trim();
@@ -722,6 +733,8 @@ public class BookingService {
         }
 
         Booking saved = bookingRepository.saveAndFlush(booking);
+        // Hủy mọi đề nghị thay đổi đang PENDING của booking này (Spec 8.5, 9 & AC-17)
+        bookingChangeRepository.cancelPendingChangesForBooking(bookingId, "Lịch đặt phòng gốc đã bị hủy", now);
         List<BookingAttendee> attendees = attendeeRepository.findById_BookingId(bookingId);
 
         auditLogRepository.save(BookingAuditLog.builder()
@@ -950,9 +963,378 @@ public class BookingService {
         return BookingResponse.from(saved, attendees, actor, warnings);
     }
 
-    public List<BookingAuditLog> getAuditLogs(UUID bookingId) {
-        findOrThrow(bookingId);
+    public List<BookingAuditLog> getAuditLogs(AuthUser viewer, UUID bookingId) {
+        Booking booking = findOrThrow(bookingId);
+        boolean isOrganizer = booking.getOrganizer().getId().equals(viewer.id());
+        boolean isAdmin = "ADMIN".equalsIgnoreCase(viewer.role()) || viewer.hasAuthority("BOOKING_MANAGE");
+        if (!isOrganizer && !isAdmin) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "Chỉ chủ lịch hoặc Quản trị viên mới được phép xem lịch sử thao tác của booking");
+        }
         return auditLogRepository.findByBookingIdOrderByCreatedAtDesc(bookingId);
+    }
+
+    // ----- Đề nghị thay đổi lịch đã duyệt (BookingChange - Spec mục 9 & AC-14..AC-17) -----
+
+    /**
+     * Chủ lịch tạo đề nghị thay đổi (BookingChange) cho một lịch đã được duyệt (APPROVED) trước giờ bắt đầu (Spec 9 & AC-14):
+     * - Lịch gốc vẫn giữ nguyên trạng thái APPROVED và vẫn giữ phòng cũ.
+     * - Mỗi booking chỉ có tối đa 1 đề nghị PENDING (PENDING_CHANGE_EXISTS).
+     * - Mức riêng tư chỉ được giữ nguyên hoặc nâng từ STANDARD lên CONFIDENTIAL, không được hạ ngược (AC-72).
+     */
+    @Transactional
+    public BookingChangeResponse createBookingChange(AuthUser actor, UUID bookingId, CreateBookingChangeRequest rq) {
+        Booking booking = findOrThrow(bookingId);
+
+        if (!booking.getOrganizer().getId().equals(actor.id())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "Chỉ chủ lịch (người tổ chức) mới được phép gửi đề nghị thay đổi lịch đã duyệt");
+        }
+        if (booking.getStatus() != BookingStatus.APPROVED && booking.getStatus() != BookingStatus.CONFIRMED) {
+            throw new BusinessException(ErrorCode.INVALID_BOOKING_STATE, "Chỉ có thể gửi đề nghị thay đổi cho lịch đã được phê duyệt (APPROVED)");
+        }
+        if (booking.getUsageStatus() != UsageStatus.NOT_CHECKED_IN) {
+            throw new BusinessException(ErrorCode.INVALID_BOOKING_STATE, "Không thể gửi đề nghị thay đổi khi cuộc họp đã check-in hoặc kết thúc");
+        }
+
+        OffsetDateTime now = OffsetDateTime.now();
+        if (!now.isBefore(booking.getStartTime())) {
+            throw new BusinessException(ErrorCode.INVALID_BOOKING_STATE, "Chỉ được gửi đề nghị thay đổi trước giờ bắt đầu của lịch gốc");
+        }
+
+        assertExpectedVersion(booking, rq.resolvedBaseVersion());
+
+        if (bookingChangeRepository.existsByBooking_IdAndStatus(bookingId, BookingChangeStatus.PENDING)) {
+            throw new BusinessException(ErrorCode.PENDING_CHANGE_EXISTS);
+        }
+
+        OffsetDateTime newStart = rq.resolvedStartTime() != null ? rq.resolvedStartTime() : booking.getStartTime();
+        OffsetDateTime newEnd = rq.resolvedEndTime() != null ? rq.resolvedEndTime() : booking.getEndTime();
+        validateTimeRange(newStart, newEnd);
+
+        MeetingType newMeetingType = rq.meetingType() != null ? rq.meetingType() : booking.getMeetingType();
+        Visibility newVisibility = resolveAndValidateVisibility(newMeetingType, rq.visibility(), rq.isConfidential(), booking.getVisibility());
+
+        UUID teamId = rq.resolvedTeamId();
+        Team targetTeam = teamId != null
+                ? validateAndLoadOrganizerTeam(actor.id(), teamId)
+                : booking.getTeam();
+
+        UUID groupId = rq.resolvedGroupId();
+        WorkGroup targetGroup = groupId != null
+                ? validateAndLoadOrganizerGroup(actor.id(), groupId)
+                : booking.getGroup();
+
+        Set<UUID> requestedParticipants = rq.resolvedParticipantIds();
+        List<UUID> participantList;
+        if (requestedParticipants != null) {
+            Set<UUID> merged = new LinkedHashSet<>(requestedParticipants);
+            merged.add(actor.id());
+            lockAndLoadActiveUsersOrThrow(merged);
+            participantList = new ArrayList<>(merged);
+        } else {
+            participantList = attendeeRepository.findById_BookingId(bookingId).stream()
+                    .map(a -> a.getUser().getId())
+                    .distinct()
+                    .toList();
+        }
+
+        int newAttendeeCount = rq.attendeeCount() != null
+                ? Math.max(rq.attendeeCount(), participantList.size())
+                : Math.max(booking.getAttendeeCount(), participantList.size());
+        if (rq.attendeeCount() != null && rq.attendeeCount() < participantList.size()) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "attendeeCount không được nhỏ hơn số người tham dự nội bộ");
+        }
+
+        UUID prefRoomId = rq.resolvedPreferredRoomId();
+        Room prefRoom = prefRoomId != null ? roomService.findOrThrow(prefRoomId) : booking.getRoom();
+        if (prefRoom != null) {
+            validateRoomForBooking(prefRoom, newAttendeeCount);
+        }
+
+        List<UUID> relatedDepts = rq.relatedDepartmentIds() != null
+                ? rq.relatedDepartmentIds().stream().filter(Objects::nonNull).distinct().toList()
+                : booking.getRelatedDepartmentIds();
+
+        BookingChange change = BookingChange.builder()
+                .booking(booking)
+                .baseVersion(booking.getVersion())
+                .title(rq.title().trim())
+                .purpose(rq.resolvedPurpose() != null ? rq.resolvedPurpose() : booking.getDescription())
+                .note(rq.note() != null ? rq.note().trim() : booking.getNote())
+                .meetingType(newMeetingType)
+                .visibility(newVisibility)
+                .startTime(newStart)
+                .endTime(newEnd)
+                .attendeeCount(newAttendeeCount)
+                .preferredRoom(prefRoom)
+                .team(targetTeam)
+                .group(targetGroup)
+                .relatedDepartmentIds(relatedDepts != null ? relatedDepts : List.of())
+                .participantIds(participantList)
+                .status(BookingChangeStatus.PENDING)
+                .build();
+
+        BookingChange saved = bookingChangeRepository.saveAndFlush(change);
+
+        auditLogRepository.save(BookingAuditLog.builder()
+                .bookingId(booking.getId())
+                .actorId(actor.id())
+                .action("SUBMIT_CHANGE")
+                .details(Map.of("changeId", saved.getId().toString(), "baseVersion", booking.getVersion()))
+                .build());
+
+        notifyActiveAdminsExcept(
+                actor.id(),
+                booking,
+                "BOOKING_CHANGE_SUBMITTED",
+                "Đề nghị thay đổi lịch họp chờ duyệt",
+                String.format("Có đề nghị thay đổi lịch họp (%s -> %s, %d người) đang chờ phê duyệt.",
+                        newStart, newEnd, newAttendeeCount),
+                "CHANGE_SUBMIT:" + saved.getId()
+        );
+
+        return BookingChangeResponse.from(saved, actor);
+    }
+
+    public List<BookingChangeResponse> getBookingChanges(AuthUser viewer, UUID bookingId) {
+        findOrThrow(bookingId);
+        return bookingChangeRepository.findByBooking_IdOrderByCreatedAtDesc(bookingId).stream()
+                .map(bc -> BookingChangeResponse.from(bc, viewer))
+                .toList();
+    }
+
+    /**
+     * Admin phê duyệt đề nghị thay đổi (BookingChange) theo Spec mục 9 & AC-15, AC-16, AC-17:
+     * - Admin không được tự duyệt đề nghị của chính mình (SELF_APPROVAL_FORBIDDEN).
+     * - Kiểm tra booking gốc còn APPROVED, chưa bắt đầu, đúng baseVersion và belum check-in.
+     * - Kiểm tra phòng mới (roomId) đủ sức chứa, không trùng lịch khác (bỏ qua chính booking gốc) và không giao RoomBlock.
+     * - Cập nhật nguyên tử booking gốc + đóng đề nghị sang APPROVED + thông báo cho hợp của người dự cũ và mới.
+     */
+    @Transactional
+    public BookingChangeResponse approveBookingChange(AuthUser admin, UUID changeId, ApproveBookingRequest rq) {
+        BookingChange change = bookingChangeRepository.findWithDetailsById(changeId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy đề nghị thay đổi lịch"));
+
+        Booking booking = change.getBooking();
+        if (booking.getOrganizer().getId().equals(admin.id())) {
+            throw new BusinessException(ErrorCode.SELF_APPROVAL_FORBIDDEN);
+        }
+        if ( rq.expectedVersion() != null && change.getVersion() != rq.expectedVersion()) {
+            throw new BusinessException(ErrorCode.VERSION_CONFLICT);
+        }
+
+        OffsetDateTime now = OffsetDateTime.now();
+        if (change.getStatus() == BookingChangeStatus.PENDING
+                && (!now.isBefore(booking.getStartTime()) || !now.isBefore(change.getStartTime()))) {
+            change.setStatus(BookingChangeStatus.EXPIRED);
+            change.setProcessedAt(now);
+            change.setProcessReason("Đề nghị đã quá giờ bắt đầu");
+            bookingChangeRepository.saveAndFlush(change);
+            throw new BusinessException(ErrorCode.INVALID_BOOKING_STATE, "Đề nghị thay đổi đã hết hạn (EXPIRED) do tới giờ bắt đầu");
+        }
+
+        if (change.getStatus() != BookingChangeStatus.PENDING) {
+            throw new BusinessException(ErrorCode.INVALID_BOOKING_STATE, "Đề nghị thay đổi không còn ở trạng thái PENDING");
+        }
+        if ((booking.getStatus() != BookingStatus.APPROVED && booking.getStatus() != BookingStatus.CONFIRMED)
+                || booking.getUsageStatus() != UsageStatus.NOT_CHECKED_IN) {
+            throw new BusinessException(ErrorCode.INVALID_BOOKING_STATE, "Lịch gốc không còn ở trạng thái hợp lệ để áp dụng thay đổi");
+        }
+        if (booking.getVersion() != change.getBaseVersion()) {
+            throw new BusinessException(ErrorCode.VERSION_CONFLICT, "Lịch gốc đã thay đổi phiên bản so với thời điểm tạo đề nghị");
+        }
+
+        // Kiểm tra lại tư cách Team / Project của người tổ chức tại thời điểm duyệt thay đổi (AC-75)
+        if (change.getTeam() != null && !userTeamRepository.existsById(new UserTeamId(booking.getOrganizer().getId(), change.getTeam().getId()))) {
+            throw new BusinessException(ErrorCode.REFERENCE_NO_LONGER_VALID, "Người tổ chức không còn thuộc Team trong đề nghị");
+        }
+        if (change.getGroup() != null && !userGroupRepository.existsById(new UserGroupId(booking.getOrganizer().getId(), change.getGroup().getId()))) {
+            throw new BusinessException(ErrorCode.REFERENCE_NO_LONGER_VALID, "Người tổ chức không còn thuộc Dự án trong đề nghị");
+        }
+
+        Set<UUID> newParticipantSet = new LinkedHashSet<>(change.getParticipantIds());
+        newParticipantSet.add(booking.getOrganizer().getId());
+        Map<UUID, User> usersById;
+        try {
+            usersById = lockAndLoadActiveUsersOrThrow(newParticipantSet);
+        } catch (BusinessException ex) {
+            throw new BusinessException(ErrorCode.REFERENCE_NO_LONGER_VALID, "Một hoặc nhiều thành viên trong đề nghị không còn hoạt động");
+        }
+
+        Room targetRoom = roomService.findForUpdateOrThrow(rq.roomId());
+        if (targetRoom.getStatus() != RoomStatus.ACTIVE) {
+            throw new BusinessException(ErrorCode.ROOM_NOT_AVAILABLE_STATUS);
+        }
+        if (change.getAttendeeCount() > targetRoom.getCapacity()) {
+            throw new BusinessException(ErrorCode.ROOM_REQUIREMENTS_NOT_MET, "Phòng được chọn không đủ sức chứa cho " + change.getAttendeeCount() + " người");
+        }
+        if (bookingRepository.existsOverlappingBooking(targetRoom.getId(), change.getStartTime(), change.getEndTime(), booking.getId())
+                || roomBlockRepository.existsOverlappingActiveBlock(targetRoom.getId(), change.getStartTime(), change.getEndTime(), null)) {
+            throw new BusinessException(ErrorCode.ROOM_UNAVAILABLE);
+        }
+
+        List<BookingAttendee> oldAttendees = attendeeRepository.findById_BookingId(booking.getId());
+        Map<UUID, BookingAttendee> existingByUserId = oldAttendees.stream()
+                .collect(Collectors.toMap(a -> a.getUser().getId(), Function.identity()));
+
+        boolean timeChanged = !booking.getStartTime().isEqual(change.getStartTime())
+                || !booking.getEndTime().isEqual(change.getEndTime());
+
+        booking.setRoom(targetRoom);
+        booking.setPreferredRoom(change.getPreferredRoom());
+        booking.setTeam(change.getTeam());
+        booking.setGroup(change.getGroup());
+        booking.setRelatedDepartmentIds(change.getRelatedDepartmentIds() != null ? new ArrayList<>(change.getRelatedDepartmentIds()) : new ArrayList<>());
+        booking.setTitle(change.getTitle());
+        booking.setDescription(change.getPurpose());
+        booking.setNote(change.getNote());
+        booking.setMeetingType(change.getMeetingType());
+        booking.setVisibility(change.getVisibility());
+        booking.setConfidential(change.getVisibility() == Visibility.CONFIDENTIAL);
+        booking.setStartTime(change.getStartTime());
+        booking.setEndTime(change.getEndTime());
+        booking.setAttendeeCount(change.getAttendeeCount());
+        booking.setCheckInDeadline(computeCheckInDeadline(change.getStartTime(), change.getEndTime()));
+
+        Map<UUID, AttendeeRole> desiredRoles = new LinkedHashMap<>();
+        for (UUID uid : newParticipantSet) {
+            desiredRoles.put(uid, uid.equals(booking.getOrganizer().getId()) ? AttendeeRole.ORGANIZER : AttendeeRole.REQUIRED);
+        }
+
+        Booking savedBooking = bookingRepository.saveAndFlush(booking);
+        Set<UUID> newlyAddedIds = new LinkedHashSet<>();
+        syncAttendeesDiff(savedBooking, existingByUserId, desiredRoles, usersById, timeChanged, newlyAddedIds);
+
+        change.setAssignedRoom(targetRoom);
+        change.setStatus(BookingChangeStatus.APPROVED);
+        change.setProcessedBy(admin.id());
+        change.setProcessedAt(now);
+        change.setProcessReason(rq.note() != null ? rq.note().trim() : null);
+        BookingChange savedChange = bookingChangeRepository.saveAndFlush(change);
+
+        auditLogRepository.save(BookingAuditLog.builder()
+                .bookingId(savedBooking.getId())
+                .actorId(admin.id())
+                .action("APPROVE_CHANGE")
+                .reason(change.getProcessReason())
+                .details(Map.of(
+                        "changeId", savedChange.getId().toString(),
+                        "assignedRoomId", targetRoom.getId().toString(),
+                        "newStartTime", savedBooking.getStartTime().toString(),
+                        "newEndTime", savedBooking.getEndTime().toString()
+                ))
+                .build());
+
+        notificationService.sendBulk(
+                newParticipantSet,
+                savedBooking.getId(),
+                "BOOKING_CHANGE_APPROVED",
+                "Đề nghị thay đổi lịch họp đã được phê duyệt",
+                String.format("Lịch họp đã được cập nhật sang phòng %s (%s - %s).",
+                        targetRoom.getName(), savedBooking.getStartTime(), savedBooking.getEndTime()),
+                Map.of("roomId", targetRoom.getId().toString(), "roomName", targetRoom.getName()),
+                "CHANGE_APPROVE:" + savedChange.getId()
+        );
+
+        return BookingChangeResponse.from(savedChange, admin);
+    }
+
+    /**
+     * Admin từ chối đề nghị thay đổi lịch đã duyệt (Spec 9 & AC-15):
+     * - Lịch gốc giữ nguyên phòng và giờ cũ.
+     */
+    @Transactional
+    public BookingChangeResponse rejectBookingChange(AuthUser admin, UUID changeId, RejectBookingRequest rq) {
+        BookingChange change = bookingChangeRepository.findWithDetailsById(changeId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy đề nghị thay đổi lịch"));
+
+        Booking booking = change.getBooking();
+        if (booking.getOrganizer().getId().equals(admin.id())) {
+            throw new BusinessException(ErrorCode.SELF_APPROVAL_FORBIDDEN);
+        }
+        if (rq.expectedVersion() != null && change.getVersion() != rq.expectedVersion()) {
+            throw new BusinessException(ErrorCode.VERSION_CONFLICT);
+        }
+        if (change.getStatus() != BookingChangeStatus.PENDING) {
+            throw new BusinessException(ErrorCode.INVALID_BOOKING_STATE, "Chỉ có thể từ chối đề nghị đang ở trạng thái PENDING");
+        }
+
+        String reason = rq.reason().trim();
+        change.setStatus(BookingChangeStatus.REJECTED);
+        change.setProcessedBy(admin.id());
+        change.setProcessedAt(OffsetDateTime.now());
+        change.setProcessReason(reason);
+
+        BookingChange saved = bookingChangeRepository.saveAndFlush(change);
+
+        auditLogRepository.save(BookingAuditLog.builder()
+                .bookingId(booking.getId())
+                .actorId(admin.id())
+                .action("REJECT_CHANGE")
+                .reason(reason)
+                .details(Map.of("changeId", saved.getId().toString()))
+                .build());
+
+        notificationService.send(
+                booking.getOrganizer().getId(),
+                booking.getId(),
+                "BOOKING_CHANGE_REJECTED",
+                "Đề nghị thay đổi lịch họp bị từ chối",
+                "Đề nghị thay đổi lịch họp của bạn đã bị từ chối (lịch gốc vẫn giữ nguyên). Lý do: " + reason,
+                Map.of("changeId", saved.getId().toString(), "reason", reason),
+                "CHANGE_REJECT:" + saved.getId()
+        );
+
+        return BookingChangeResponse.from(saved, admin);
+    }
+
+    /**
+     * Chủ lịch rút lại đề nghị thay đổi đang PENDING trước khi Admin xử lý (Spec 9 & 23.2: POST /booking-changes/{id}/withdraw).
+     */
+    @Transactional
+    public BookingChangeResponse withdrawBookingChange(AuthUser actor, UUID changeId, CancelBookingRequest rq) {
+        BookingChange change = bookingChangeRepository.findWithDetailsById(changeId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy đề nghị thay đổi lịch"));
+
+        Booking booking = change.getBooking();
+        if (!booking.getOrganizer().getId().equals(actor.id())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "Chỉ người tổ chức mới được rút đề nghị thay đổi của mình");
+        }
+        if (rq != null && rq.expectedVersion() != null && change.getVersion() != rq.expectedVersion()) {
+            throw new BusinessException(ErrorCode.VERSION_CONFLICT);
+        }
+        if (change.getStatus() != BookingChangeStatus.PENDING) {
+            throw new BusinessException(ErrorCode.INVALID_BOOKING_STATE, "Chỉ có thể rút đề nghị đang ở trạng thái PENDING");
+        }
+
+        String reason = rq != null && rq.reason() != null && !rq.reason().isBlank()
+                ? rq.reason().trim()
+                : "Người tổ chức chủ động rút đề nghị thay đổi";
+
+        change.setStatus(BookingChangeStatus.CANCELLED);
+        change.setProcessedBy(actor.id());
+        change.setProcessedAt(OffsetDateTime.now());
+        change.setProcessReason(reason);
+
+        BookingChange saved = bookingChangeRepository.saveAndFlush(change);
+
+        auditLogRepository.save(BookingAuditLog.builder()
+                .bookingId(booking.getId())
+                .actorId(actor.id())
+                .action("WITHDRAW_CHANGE")
+                .reason(reason)
+                .details(Map.of("changeId", saved.getId().toString()))
+                .build());
+
+        notifyActiveAdminsExcept(
+                actor.id(),
+                booking,
+                "BOOKING_CHANGE_WITHDRAWN",
+                "Đề nghị thay đổi lịch họp đã được rút lại",
+                "Người tổ chức đã rút lại đề nghị thay đổi lịch họp.",
+                "CHANGE_WITHDRAW:" + saved.getId()
+        );
+
+        return BookingChangeResponse.from(saved, actor);
     }
 
     // ----- Helpers -----

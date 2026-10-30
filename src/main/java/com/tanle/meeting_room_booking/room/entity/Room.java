@@ -58,6 +58,10 @@ public class Room {
     @Column(name = "deleted_at")
     private OffsetDateTime deletedAt;
 
+    public String getCode() {
+        return this.name;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
@@ -74,4 +78,3 @@ public class Room {
         return this.deletedAt != null;
     }
 }
-

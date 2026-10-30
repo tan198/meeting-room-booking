@@ -78,11 +78,33 @@ public class RoomService {
 
     @Transactional
     public RoomResponse updateRoom(UUID id, UpdateRoomRequest rq) {
-        Room room = findOrThrow(id);
+        Room room = findForUpdateOrThrow(id);
         String name = rq.name().trim();
 
         if (roomRepository.existsByNameIgnoreCaseAndIdNot(name, id)) {
             throw new BusinessException(ErrorCode.DUPLICATE_RESOURCE, "Phòng họp '" + name + "' đã tồn tại");
+        }
+
+        // Theo Spec 6.1 & AC-26: Chặn thao tác chuyển INACTIVE hoặc giảm sức chứa nếu làm bất kỳ lịch đang giữ phòng hiệu lực từ hiện tại trở đi không còn hợp lệ
+        OffsetDateTime now = OffsetDateTime.now();
+        if (rq.status() != RoomStatus.ACTIVE) {
+            var affected = bookingRepository.findFutureBookingsViolatingRoomChange(id, now, null);
+            if (!affected.isEmpty()) {
+                throw new BusinessException(
+                        ErrorCode.INVALID_BOOKING_STATE,
+                        "Không thể ngừng hoạt động phòng khi vẫn còn " + affected.size() + " lịch họp đang giữ hiệu lực. Vui lòng chuyển phòng hoặc hủy các lịch bị ảnh hưởng trước.",
+                        java.util.Map.of("affectedBookingIds", affected.stream().map(b -> b.getId().toString()).toList())
+                );
+            }
+        } else if (rq.capacity() < room.getCapacity()) {
+            var capViolations = bookingRepository.findFutureBookingsViolatingRoomChange(id, now, rq.capacity());
+            if (!capViolations.isEmpty()) {
+                throw new BusinessException(
+                        ErrorCode.ROOM_REQUIREMENTS_NOT_MET,
+                        "Không thể giảm sức chứa xuống " + rq.capacity() + " vì có " + capViolations.size() + " lịch họp tương lai vượt quá sức chứa mới.",
+                        java.util.Map.of("affectedBookingIds", capViolations.stream().map(b -> b.getId().toString()).toList())
+                );
+            }
         }
 
         room.setName(name);

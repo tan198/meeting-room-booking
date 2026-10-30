@@ -30,7 +30,7 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/api/v1")
 @RequiredArgsConstructor
-@Tag(name = "4. Bookings", description = "Gửi yêu cầu đặt phòng (PENDING), Admin phê duyệt/từ chối/chuyển phòng (APPROVED/REJECTED), Check-in/Check-out và Hủy lịch theo chuẩn Spec")
+@Tag(name = "4. Bookings & Booking Changes", description = "Gửi yêu cầu đặt phòng (PENDING), Admin phê duyệt/từ chối/chuyển phòng (APPROVED/REJECTED), đề nghị thay đổi lịch đã duyệt (BookingChange), Check-in/Check-out và Hủy lịch theo chuẩn Spec")
 public class BookingController {
 
     private final BookingService bookingService;
@@ -107,6 +107,68 @@ public class BookingController {
             @Parameter(description = "UUID của booking") @PathVariable UUID id,
             @Valid @RequestBody ReassignRoomRequest request) {
         return ApiResponse.ok("Chuyển phòng họp thành công", bookingService.reassignRoom(principal, id, request));
+    }
+
+    @Operation(
+            summary = "Tạo đề nghị thay đổi cho lịch đã được duyệt (BookingChange - Spec 9 & AC-14)",
+            description = "Chủ lịch gửi đề nghị đổi giờ, số người, thiết bị, người tham dự hoặc phòng mong muốn cho một lịch đang `APPROVED`. Lịch gốc vẫn giữ nguyên phòng cũ cho tới khi Admin duyệt."
+    )
+    @PostMapping("/bookings/{id}/changes")
+    public ResponseEntity<ApiResponse<BookingChangeResponse>> createBookingChange(
+            @Parameter(hidden = true) @AuthenticationPrincipal AuthUser principal,
+            @Parameter(description = "UUID của booking đã duyệt") @PathVariable UUID id,
+            @Valid @RequestBody CreateBookingChangeRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.ok("Gửi đề nghị thay đổi lịch đặt phòng thành công", bookingService.createBookingChange(principal, id, request)));
+    }
+
+    @Operation(
+            summary = "Xem danh sách đề nghị thay đổi (BookingChange) của một lịch đặt phòng",
+            description = "Chủ lịch hoặc Quản trị viên (`BOOKING_MANAGE`) có thể xem lịch sử các đề nghị thay đổi của booking."
+    )
+    @GetMapping("/bookings/{id}/changes")
+    public ApiResponse<List<BookingChangeResponse>> getBookingChanges(
+            @Parameter(hidden = true) @AuthenticationPrincipal AuthUser principal,
+            @Parameter(description = "UUID của booking") @PathVariable UUID id) {
+        return ApiResponse.ok(bookingService.getBookingChanges(principal, id));
+    }
+
+    @Operation(
+            summary = "[Admin] Phê duyệt đề nghị thay đổi lịch đặt phòng (Spec 9 & AC-15)",
+            description = "Yêu cầu quyền `BOOKING_MANAGE`. Admin không được tự duyệt đề nghị của chính mình (`SELF_APPROVAL_FORBIDDEN`). Áp dụng thông tin mới và phân phòng chính thức cho booking gốc."
+    )
+    @PostMapping("/booking-changes/{id}/approve")
+    @PreAuthorize("hasAuthority('BOOKING_MANAGE')")
+    public ApiResponse<BookingChangeResponse> approveBookingChange(
+            @Parameter(hidden = true) @AuthenticationPrincipal AuthUser principal,
+            @Parameter(description = "UUID của đề nghị thay đổi (BookingChange)") @PathVariable UUID id,
+            @Valid @RequestBody ApproveBookingRequest request) {
+        return ApiResponse.ok("Phê duyệt đề nghị thay đổi lịch thành công", bookingService.approveBookingChange(principal, id, request));
+    }
+
+    @Operation(
+            summary = "[Admin] Từ chối đề nghị thay đổi lịch đặt phòng (Spec 9 & AC-16)",
+            description = "Yêu cầu quyền `BOOKING_MANAGE`. Lịch gốc vẫn giữ nguyên trạng thái `APPROVED` và phòng cũ."
+    )
+    @PostMapping("/booking-changes/{id}/reject")
+    @PreAuthorize("hasAuthority('BOOKING_MANAGE')")
+    public ApiResponse<BookingChangeResponse> rejectBookingChange(
+            @Parameter(hidden = true) @AuthenticationPrincipal AuthUser principal,
+            @Parameter(description = "UUID của đề nghị thay đổi (BookingChange)") @PathVariable UUID id,
+            @Valid @RequestBody RejectBookingRequest request) {
+        return ApiResponse.ok("Đã từ chối đề nghị thay đổi lịch", bookingService.rejectBookingChange(principal, id, request));
+    }
+
+    @Operation(
+            summary = "Chủ lịch rút lại đề nghị thay đổi đang chờ duyệt (Spec 9 & AC-17)",
+            description = "Chủ lịch rút lại đề nghị `PENDING` trước khi Admin xử lý; lịch gốc giữ nguyên không đổi."
+    )
+    @PostMapping("/booking-changes/{id}/withdraw")
+    public ApiResponse<BookingChangeResponse> withdrawBookingChange(
+            @Parameter(hidden = true) @AuthenticationPrincipal AuthUser principal,
+            @Parameter(description = "UUID của đề nghị thay đổi (BookingChange)") @PathVariable UUID id,
+            @RequestBody(required = false) CancelBookingRequest request) {
+        return ApiResponse.ok("Đã rút lại đề nghị thay đổi lịch", bookingService.withdrawBookingChange(principal, id, request));
     }
 
     @Operation(
@@ -231,12 +293,13 @@ public class BookingController {
     }
 
     @Operation(
-            summary = "Xem lịch sử dấu vết thao tác (Audit Logs / History) của một booking",
-            description = "Hỗ trợ cả `/api/v1/bookings/{id}/audit-logs` và `/api/v1/bookings/{id}/history` theo Spec 16."
+            summary = "Xem lịch sử dấu vết thao tác (Audit Logs / History) của một booking (Spec 16 & 23)",
+            description = "Hỗ trợ cả `/api/v1/bookings/{id}/audit-logs` và `/api/v1/bookings/{id}/history`. Chủ lịch hoặc Quản trị viên được xem."
     )
     @GetMapping({"/bookings/{id}/audit-logs", "/bookings/{id}/history"})
-    @PreAuthorize("hasAuthority('BOOKING_MANAGE')")
-    public ApiResponse<List<BookingAuditLog>> getAuditLogs(@Parameter(description = "UUID của booking") @PathVariable UUID id) {
-        return ApiResponse.ok(bookingService.getAuditLogs(id));
+    public ApiResponse<List<BookingAuditLog>> getAuditLogs(
+            @Parameter(hidden = true) @AuthenticationPrincipal AuthUser principal,
+            @Parameter(description = "UUID của booking") @PathVariable UUID id) {
+        return ApiResponse.ok(bookingService.getAuditLogs(principal, id));
     }
 }
