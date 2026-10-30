@@ -46,18 +46,26 @@ public class RoomController {
     }
 
     @Operation(
-            summary = "Tra cứu danh sách phòng họp đang trống trong khung giờ",
-            description = "Trả về các phòng đang ACTIVE, đủ sức chứa và chưa có lịch đặt phòng (CONFIRMED / IN_PROGRESS) trùng với khoảng `[startTime, endTime)`."
+            summary = "Tra cứu danh sách phòng họp đang trống trong khung giờ (hỗ trợ cả /available và /availability theo Spec 16)",
+            description = "Trả về các phòng đang ACTIVE, đủ sức chứa và chưa có lịch đặt phòng (APPROVED / CONFIRMED / IN_PROGRESS) trùng với khoảng `[startTime, endTime)`. Sắp xếp theo sức chứa tăng dần."
     )
-    @GetMapping("/available")
+    @GetMapping({"/available", "/availability"})
     public ApiResponse<List<RoomResponse>> findAvailable(
-            @Parameter(description = "Thời gian bắt đầu (ISO-8601, VD: 2026-10-30T09:00:00+07:00)", required = true)
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime startTime,
-            @Parameter(description = "Thời gian kết thúc (ISO-8601, VD: 2026-10-30T10:00:00+07:00)", required = true)
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime endTime,
-            @Parameter(description = "Sức chứa tối thiểu") @RequestParam(required = false) Integer minCapacity,
+            @Parameter(description = "Thời gian bắt đầu (hỗ trợ startTime hoặc startAt theo ISO-8601)")
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime startTime,
+            @Parameter(description = "Thời gian bắt đầu theo Spec (startAt)")
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime startAt,
+            @Parameter(description = "Thời gian kết thúc (hỗ trợ endTime hoặc endAt theo ISO-8601)")
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime endTime,
+            @Parameter(description = "Thời gian kết thúc theo Spec (endAt)")
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime endAt,
+            @Parameter(description = "Sức chứa tối thiểu (minCapacity hoặc attendeeCount)") @RequestParam(required = false) Integer minCapacity,
+            @Parameter(description = "Số người tham dự (attendeeCount)") @RequestParam(required = false) Integer attendeeCount,
             @Parameter(description = "Tầng") @RequestParam(required = false) Integer floor) {
-        return ApiResponse.ok(roomService.findAvailableRooms(startTime, endTime, minCapacity, floor));
+        OffsetDateTime resolvedStart = startAt != null ? startAt : startTime;
+        OffsetDateTime resolvedEnd = endAt != null ? endAt : endTime;
+        Integer resolvedCap = attendeeCount != null ? attendeeCount : minCapacity;
+        return ApiResponse.ok(roomService.findAvailableRooms(resolvedStart, resolvedEnd, resolvedCap, floor));
     }
 
     @Operation(summary = "Xem chi tiết phòng họp theo ID")
@@ -76,8 +84,8 @@ public class RoomController {
                 .body(ApiResponse.ok("Tạo phòng họp thành công", roomService.createRoom(request)));
     }
 
-    @Operation(summary = "[Admin/Manager] Cập nhật thông tin phòng họp", description = "Yêu cầu quyền `ROOM_UPDATE`.")
-    @PutMapping("/{id}")
+    @Operation(summary = "[Admin/Manager] Cập nhật thông tin phòng họp (hỗ trợ cả PUT và PATCH)", description = "Yêu cầu quyền `ROOM_UPDATE`.")
+    @RequestMapping(value = "/{id}", method = {RequestMethod.PUT, RequestMethod.PATCH})
     @PreAuthorize("hasAuthority('ROOM_UPDATE')")
     public ApiResponse<RoomResponse> update(@Parameter(description = "UUID của phòng họp") @PathVariable UUID id,
                                             @Valid @RequestBody UpdateRoomRequest request) {
@@ -92,4 +100,3 @@ public class RoomController {
         return ApiResponse.ok("Xóa phòng họp thành công");
     }
 }
-

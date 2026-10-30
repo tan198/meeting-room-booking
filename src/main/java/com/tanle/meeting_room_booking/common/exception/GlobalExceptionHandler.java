@@ -1,6 +1,5 @@
 package com.tanle.meeting_room_booking.common.exception;
 
-
 import com.tanle.meeting_room_booking.common.logging.RequestLoggingFilter;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
@@ -67,11 +66,19 @@ public class GlobalExceptionHandler {
 
         String target = constraintName != null ? constraintName : (rootMsg != null ? rootMsg : "");
 
-        if (target.contains("excl_bookings_no_room_overlap")) {
+        if (target.contains("excl_bookings_no_room_overlap") || target.contains("excl_room_blocks_no_overlap")) {
             return buildProblemDetail(
                     HttpStatus.CONFLICT,
-                    ErrorCode.ROOM_TIME_CONFLICT.name(),
-                    "Phòng họp vừa được người khác đặt trong khung giờ này (Bắt bởi DB Exclusion Constraint).",
+                    ErrorCode.ROOM_UNAVAILABLE.name(),
+                    "Phòng họp hoặc khoảng chặn bị giao lịch trong khung giờ này (Bắt bởi DB Exclusion Constraint).",
+                    request
+            );
+        }
+        if (target.contains("uq_booking_changes_one_pending")) {
+            return buildProblemDetail(
+                    HttpStatus.CONFLICT,
+                    ErrorCode.PENDING_CHANGE_EXISTS.name(),
+                    ErrorCode.PENDING_CHANGE_EXISTS.getDefaultMessage(),
                     request
             );
         }
@@ -115,8 +122,8 @@ public class GlobalExceptionHandler {
         log.warn("[OptimisticLockingFailure] Xung đột cập nhật đồng thời: {}", ex.getMessage());
         return buildProblemDetail(
                 HttpStatus.CONFLICT,
-                ErrorCode.CONCURRENT_MODIFICATION.name(),
-                ErrorCode.CONCURRENT_MODIFICATION.getDefaultMessage(),
+                ErrorCode.VERSION_CONFLICT.name(),
+                ErrorCode.VERSION_CONFLICT.getDefaultMessage(),
                 request
         );
     }
@@ -187,7 +194,11 @@ public class GlobalExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(status, detail);
         problem.setTitle(errorCode);
         problem.setInstance(URI.create(request.getRequestURI()));
-        problem.setProperty("traceId", MDC.get(RequestLoggingFilter.TRACE_ID_KEY));
+        String traceId = MDC.get(RequestLoggingFilter.TRACE_ID_KEY);
+        problem.setProperty("code", errorCode);
+        problem.setProperty("message", detail);
+        problem.setProperty("requestId", traceId);
+        problem.setProperty("traceId", traceId);
         problem.setProperty("timestamp", OffsetDateTime.now());
         return problem;
     }

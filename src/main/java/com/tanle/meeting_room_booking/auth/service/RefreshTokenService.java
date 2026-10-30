@@ -5,7 +5,6 @@ import com.tanle.meeting_room_booking.auth.repository.RefreshTokenRepository;
 import com.tanle.meeting_room_booking.common.config.JwtProperties;
 import com.tanle.meeting_room_booking.common.exception.BusinessException;
 import com.tanle.meeting_room_booking.common.exception.ErrorCode;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -57,6 +56,13 @@ public class RefreshTokenService {
                 .expiresAt(OffsetDateTime.now().plus(ttl))
                 .build());
         return new IssuedRefreshToken(raw, ttl.toSeconds());
+    }
+
+    @Transactional(readOnly = true)
+    public UUID findOwnerIdOrThrow(String rawToken) {
+        return repository.findByTokenHash(hash(rawToken))
+                .map(RefreshToken::getUserId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_REFRESH_TOKEN));
     }
 
     /**

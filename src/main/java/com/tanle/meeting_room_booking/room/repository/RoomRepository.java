@@ -2,17 +2,24 @@ package com.tanle.meeting_room_booking.room.repository;
 
 import com.tanle.meeting_room_booking.room.entity.Room;
 import com.tanle.meeting_room_booking.room.entity.RoomStatus;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 public interface RoomRepository extends JpaRepository<Room, UUID> {
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT r FROM Room r WHERE r.id = :id")
+    Optional<Room> findByIdForUpdate(@Param("id") UUID id);
 
     boolean existsByNameIgnoreCase(String name);
 
@@ -46,11 +53,23 @@ public interface RoomRepository extends JpaRepository<Room, UUID> {
                   SELECT 1 FROM Booking b
                   WHERE b.room.id = r.id
                     AND b.status IN (
+                        com.tanle.meeting_room_booking.booking.entity.BookingStatus.APPROVED,
                         com.tanle.meeting_room_booking.booking.entity.BookingStatus.CONFIRMED,
                         com.tanle.meeting_room_booking.booking.entity.BookingStatus.IN_PROGRESS
                     )
+                    AND b.usageStatus NOT IN (
+                        com.tanle.meeting_room_booking.booking.entity.UsageStatus.NO_SHOW,
+                        com.tanle.meeting_room_booking.booking.entity.UsageStatus.INTERRUPTED
+                    )
                     AND b.startTime < :endTime
-                    AND b.endTime > :startTime
+                    AND COALESCE(b.releasedAt, b.endTime) > :startTime
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM RoomBlock rb
+                  WHERE rb.room.id = r.id
+                    AND rb.status = com.tanle.meeting_room_booking.issue.entity.RoomBlockStatus.ACTIVE
+                    AND rb.startTime < :endTime
+                    AND rb.endTime > :startTime
               )
             ORDER BY r.capacity ASC, r.floor ASC, r.name ASC
             """)
@@ -61,4 +80,3 @@ public interface RoomRepository extends JpaRepository<Room, UUID> {
             @Param("floor") Integer floor
     );
 }
-
